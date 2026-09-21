@@ -1,0 +1,13 @@
+{
+ "counters": [
+  {
+   "key": "health",
+   "label": "Health",
+   "labelJa": "ライフ",
+   "default": 20,
+   "min": 0,
+   "max": null
+  }
+ ],
+ "startingHand": 7
+}

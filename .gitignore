@@ -1,0 +1,5 @@
+decks/*
+!decks/.gitkeep
+__pycache__/
+PLAN.md
+*.zip

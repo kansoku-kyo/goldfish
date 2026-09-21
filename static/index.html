@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Goldfish</title>
+<link rel="stylesheet" href="static/styles.css">
+</head>
+<body>
+<div id="app">
+
+  <header id="topbar" data-player-only>
+    <div class="bar-row bar-row1">
+      <div class="bar-left">
+        <button id="btn-burger" class="burger-btn" aria-label="Menu">&#8801;</button>
+        <span id="deck-name-label" class="bar-info"></span>
+        <button id="btn-next-turn" class="turn-btn">No game</button>
+      </div>
+      <div class="bar-right">
+        <button id="btn-undo" data-i18n="undo">Undo</button>
+        <button id="btn-dice" data-i18n="dice">Dice</button>
+      </div>
+    </div>
+    <div class="bar-row bar-row2 counters-bar">
+      <div id="counters-row" class="counters-list"></div>
+      <button id="btn-counters" class="gear-btn" data-i18n-title="countersTitle" title="Counters" aria-label="Counters">&#9881;</button>
+    </div>
+  </header>
+
+  <header id="stream-topbar" data-stream-only>
+    <div class="bar-row bar-row1">
+      <span id="stream-deck-name"></span>
+      <span id="stream-turn-indicator"></span>
+      <span id="stream-hand-badge"></span>
+    </div>
+    <div class="bar-row bar-row2" id="stream-counters-row"></div>
+  </header>
+
+  <div id="burger-menu" class="dropdown-menu" hidden data-player-only>
+    <div class="menu-section">
+      <select id="deck-select"></select>
+      <button id="btn-new-game" data-i18n="newGame">New game</button>
+    </div>
+    <div class="menu-section" data-folder-only>
+      <span class="menu-label" data-i18n="decksFolder">Decks folder:</span>
+      <span id="folder-label" class="menu-value"></span>
+      <button id="btn-pick-folder" data-i18n="chooseFolder">Choose&hellip;</button>
+    </div>
+    <div class="menu-section">
+      <label class="file-btn"><span data-i18n="importFromDisk">Import from disk&hellip;</span><input id="import-disk" type="file" webkitdirectory multiple></label>
+      <span id="import-status"></span>
+    </div>
+    <div class="menu-section">
+      <button id="btn-open-stream" data-i18n="openStream">Open stream window</button>
+      <button id="btn-toggle-log" data-i18n="showLog">Show log</button>
+      <button id="btn-language" data-i18n="languageMenuItem">Language / &#8288;言語</button>
+      <button id="btn-reset-data" data-i18n="resetData">Reset app data&hellip;</button>
+    </div>
+    <div class="menu-footer"><span id="app-version"></span><span class="menu-footer-sep">&middot;</span><span>きょ</span></div>
+  </div>
+
+  <div id="waiting-banner" data-stream-only data-i18n="waitingBanner">Waiting for player window&hellip;</div>
+  <div id="folder-banner" data-player-only hidden>
+    <span data-i18n="folderBannerText">Reconnect the decks folder to continue.</span>
+    <button id="btn-reconnect-folder" data-i18n="reconnectFolder">Reconnect</button>
+  </div>
+
+  <div id="field-panel">
+    <div id="field-main">
+      <div id="field-header">
+        <button id="btn-field-menu" class="pile-menu-btn"><span class="pile-title" id="field-title" data-i18n="field">Field</span><span class="pile-caret" data-player-only>&#9662;</span></button>
+        <div id="field-zoom" class="field-zoom" data-i18n-title="zoomTitle" title="Field zoom">
+          <button id="zoom-out" type="button" class="zoom-btn">&minus;</button>
+          <span id="zoom-value" class="zoom-value">100%</span>
+          <button id="zoom-in" type="button" class="zoom-btn">+</button>
+        </div>
+      </div>
+      <ul id="field-menu" class="dropdown-menu" hidden data-player-only>
+        <li data-action="untapAll" data-i18n="untapAll">Untap all</li>
+        <li data-action="toHand" data-i18n="fieldMoveAllToHand">Move all to hand</li>
+        <li data-action="toTrash" data-i18n="fieldMoveAllToTrash">Move all to trash</li>
+      </ul>
+      <div id="field-wrap">
+      <div id="field" data-zone="field">
+        <div id="tutorial" data-player-only hidden>
+          <div class="tutorial-inner">
+            <h2 data-i18n="tutorialTitle">Welcome to Goldfish</h2>
+
+            <h3 data-i18n="tutorialStep1Title">1. Get a deck</h3>
+            <p data-i18n="tutorialStep1Text">Open the ☰ menu and use "Import from disk…" to pick a folder of card images. Name each file after the card, with " xN" for the number of copies, e.g. "Dragon x3.png". An optional "cardback.png" is used as the card back.</p>
+            <p id="tutorial-no-decks" data-i18n="tutorialNoDecks" hidden>No decks found yet</p>
+
+            <h3 data-i18n="tutorialStep2Title">2. Start</h3>
+            <p data-i18n="tutorialStep2Text">Pick a deck in the ☰ menu and press New game. 7 cards are drawn to your hand.</p>
+
+            <h3 data-i18n="tutorialStep3Title">3. Play</h3>
+            <p data-i18n="tutorialStep3Text">Drag cards from your hand to the field. Double-click a card to tap it. Right-click a card for its menu.</p>
+            <table class="tutorial-hotkeys">
+              <tbody>
+                <tr><td data-i18n="tutorialKeyD">D</td><td data-i18n="tutorialKeyDDesc">Draw</td><td data-i18n="tutorialKeyS">S</td><td data-i18n="tutorialKeySDesc">Shuffle</td></tr>
+                <tr><td data-i18n="tutorialKeyN">N</td><td data-i18n="tutorialKeyNDesc">Next turn</td><td data-i18n="tutorialKeyCtrlZ">Ctrl+Z</td><td data-i18n="tutorialKeyCtrlZDesc">Undo</td></tr>
+                <tr><td data-i18n="tutorialKeyEsc">Esc</td><td data-i18n="tutorialKeyEscDesc">Close menu/modal</td><td></td><td></td></tr>
+                <tr><td data-i18n="tutorialKeyB">B</td><td data-i18n="tutorialKeyBDesc">Hovered card to field</td><td data-i18n="tutorialKeyT">T</td><td data-i18n="tutorialKeyTDesc">Tap hovered card</td></tr>
+                <tr><td data-i18n="tutorialKeyF">F</td><td data-i18n="tutorialKeyFDesc">Flip hovered card</td><td data-i18n="tutorialKeyR">R</td><td data-i18n="tutorialKeyRDesc">Hovered card to hand</td></tr>
+                <tr><td data-i18n="tutorialKeyG">G</td><td data-i18n="tutorialKeyGDesc">Hovered card to trash</td><td data-i18n="tutorialKeyL">L</td><td data-i18n="tutorialKeyLDesc">Hovered card to deck top</td></tr>
+                <tr><td data-i18n="tutorialKeyShiftL">Shift+L</td><td data-i18n="tutorialKeyShiftLDesc">Hovered card to deck bottom</td><td data-i18n="tutorialKeyCtrlG">Ctrl+G</td><td data-i18n="tutorialKeyCtrlGDesc">Group selected cards</td></tr>
+                <tr><td data-i18n="tutorialKeyX">X</td><td data-i18n="tutorialKeyXDesc">Swap two selected</td><td></td><td></td></tr>
+              </tbody>
+            </table>
+
+            <h3 data-i18n="tutorialStep4Title">4. Stream</h3>
+            <p data-i18n="tutorialStep4Text">☰ → Open stream window, then share that window. Your hand and deck contents stay hidden there; deck and trash viewers are mirrored.</p>
+
+            <p class="tutorial-footer" data-i18n="tutorialFooter">Switch language any time from ☰ → Language / 言語.</p>
+          </div>
+        </div>
+        <div id="field-cards"></div>
+        <div id="shuffle-prompt" hidden data-player-only>
+          <span data-i18n="shufflePromptText">Shuffle the deck?</span>
+          <button id="shuffle-prompt-yes" data-i18n="shufflePromptYes">Shuffle</button>
+          <button id="shuffle-prompt-no" data-i18n="shufflePromptNo">Keep order</button>
+        </div>
+        <div id="card-preview" data-player-only hidden></div>
+        <div id="select-rect" data-player-only hidden></div>
+        <div id="log-panel" hidden>
+          <ul id="log-list"></ul>
+        </div>
+        <div id="stream-notice" data-stream-only hidden>
+          <span id="stream-notice-text"></span>
+        </div>
+        <div id="dice-overlay" data-stream-only hidden>
+          <div id="dice-overlay-stage" class="dice-stage"></div>
+          <div id="dice-overlay-result" class="dice-result"></div>
+        </div>
+      </div>
+      </div>
+    </div>
+    <div id="side-piles" data-stream-only></div>
+  </div>
+
+  <div id="bottom-row">
+    <div id="hand-section" data-player-only>
+      <div class="pile-header">
+        <button id="btn-hand-menu" class="pile-menu-btn"><span class="pile-title" id="hand-title" data-i18n="hand">Hand</span><span class="pile-caret">&#9662;</span></button>
+      </div>
+      <ul id="hand-menu" class="dropdown-menu" hidden>
+        <li data-action="toDeckTop" data-i18n="moveAllToDeckTop">Move all to deck top</li>
+        <li data-action="toDeckBottom" data-i18n="moveAllToDeckBottom">Move all to deck bottom</li>
+        <li data-action="toDeckBottomRandom" data-i18n="moveAllToDeckBottomRandom">Move all to deck bottom (random order)</li>
+        <li data-action="toTrash" data-i18n="handMoveAllToTrash">Move all to trash</li>
+        <li data-action="discardRandom" data-i18n="discardRandom">Discard random</li>
+      </ul>
+      <div id="hand-strip-wrap">
+        <div id="hand-strip-scroll">
+          <div id="hand-strip" data-zone="hand"></div>
+        </div>
+        <span class="pile-count-badge" id="hand-count-badge"></span>
+      </div>
+    </div>
+
+    <div id="piles-section">
+      <div id="pile-deck" class="pile" data-zone="deck">
+        <div class="pile-header">
+          <button id="btn-deck-menu" class="pile-menu-btn"><span class="pile-title" id="deck-count" data-i18n="deck">Deck</span><span class="pile-caret" data-player-only>&#9662;</span></button>
+        </div>
+        <ul id="deck-menu" class="dropdown-menu" hidden data-player-only>
+          <li data-action="draw" data-i18n="drawOne">Draw 1</li>
+          <li data-action="topToField" data-i18n="deckTopToField">Move top card to field</li>
+          <li data-action="topToFieldFaceDown" data-i18n="deckTopToFieldFaceDown">Move top card to field face down</li>
+          <li data-action="viewTop" data-i18n="viewTopX">View top X&hellip;</li>
+          <li data-action="viewAll" data-i18n="viewAllSearch">View all / search</li>
+          <li data-action="millTop" data-i18n="millTopX">Mill top X &rarr; trash&hellip;</li>
+          <li data-action="shuffle" data-i18n="shuffle">Shuffle</li>
+        </ul>
+        <div class="pile-body" draggable="true">
+          <img id="deck-back-img" alt="Deck" src="static/cardback.svg" draggable="false">
+          <span class="pile-count-badge" id="deck-count-badge"></span>
+        </div>
+      </div>
+
+      <div id="pile-trash" class="pile" data-zone="trash">
+        <div class="pile-header">
+          <button id="btn-trash-menu" class="pile-menu-btn"><span class="pile-title" id="trash-count" data-i18n="trash">Trash</span><span class="pile-caret" data-player-only>&#9662;</span></button>
+        </div>
+        <ul id="trash-menu" class="dropdown-menu" hidden data-player-only>
+          <li data-action="view" data-i18n="view">View</li>
+          <li data-action="shuffleIntoDeck" data-i18n="trashShuffleIntoDeck">Shuffle trash into deck</li>
+          <li data-action="allToHand" data-i18n="trashAllToHand">Move all to hand</li>
+          <li data-action="topToHand" data-i18n="trashTopToHand">Move top card to hand</li>
+        </ul>
+        <div class="pile-body" draggable="true">
+          <div id="trash-pile-box" class="pile-box"></div>
+          <img id="trash-top-img" alt="" hidden draggable="false">
+          <span class="pile-count-badge" id="trash-count-badge"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <ul id="card-context-menu" class="context-menu" hidden data-player-only>
+    <li data-action="toField" data-i18n="toField">To field (B)</li>
+    <li data-action="toggleTap">Set Standby (T)</li>
+    <li data-action="toggleFaceDown">Turn face down (F)</li>
+    <li data-action="toHand" data-i18n="toHandHotkey">To hand (R)</li>
+    <li data-action="toTrash" data-i18n="toTrashHotkey">To trash (G)</li>
+    <li data-action="toDeckTop" data-i18n="toDeckTopHotkey">To deck top (L)</li>
+    <li data-action="toDeckBottom" data-i18n="toDeckBottomHotkey">To deck bottom (Shift+L)</li>
+    <li data-action="groupSelected" data-i18n="groupSelected">Group selected (Ctrl+G)</li>
+    <li data-action="ungroup" data-i18n="ungroup">Ungroup (Ctrl+Shift+G)</li>
+    <li data-action="swapPositions" data-i18n="swapPositions">Swap positions (X)</li>
+  </ul>
+
+  <div id="search-modal" class="modal-overlay" hidden data-player-only>
+    <div class="modal">
+      <div class="modal-header"><input id="search-input" type="search" autocomplete="off" data-i18n-placeholder="searchPlaceholder"><button id="search-close" data-i18n="close">Close</button></div>
+      <div id="search-no-matches" class="modal-hint" data-i18n="noMatches" hidden>No matches</div>
+      <div id="search-grid" class="modal-grid"></div>
+    </div>
+  </div>
+
+  <div id="look-modal" class="modal-overlay" hidden data-player-only>
+    <div class="modal">
+      <div class="modal-header">
+        <span data-i18n="lookAtTopCards">Look at top cards</span>
+        <div class="modal-actions">
+          <button id="look-shuffle" data-i18n="shuffleDeck">Shuffle deck</button>
+          <button id="look-putback-top" data-i18n="putBackTop">Put back on top (this order)</button>
+          <button id="look-putback-bottom" data-i18n="putBackBottom">Put back on bottom (this order)</button>
+          <button id="look-close" data-i18n="close">Close</button>
+        </div>
+      </div>
+      <div id="look-hint" class="modal-hint" data-i18n="dragToReorder">Drag to reorder</div>
+      <div id="look-grid" class="modal-grid"></div>
+    </div>
+  </div>
+
+  <div id="dice-modal" class="modal-overlay" hidden data-player-only>
+    <div class="modal dice-modal">
+      <div class="modal-header">
+        <span data-i18n="dice">Dice</span>
+        <button id="dice-close" data-i18n="close">Close</button>
+      </div>
+      <div class="dice-modal-body">
+        <div id="dice-sides-row" class="dice-chip-row"></div>
+        <div class="dice-stepper">
+          <button id="dice-count-minus" type="button" class="dice-stepper-btn">&minus;</button>
+          <span id="dice-count-value" class="dice-stepper-value">1</span>
+          <button id="dice-count-plus" type="button" class="dice-stepper-btn">+</button>
+        </div>
+        <button id="dice-roll-btn" type="button" class="dice-roll-btn" data-i18n="roll">Roll</button>
+        <div id="dice-stage" class="dice-stage"></div>
+        <div id="dice-result" class="dice-result"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="trash-modal" class="modal-overlay" hidden>
+    <div class="modal">
+      <div class="modal-header"><span data-i18n="trash">Trash</span><button id="trash-close" data-i18n="close">Close</button></div>
+      <div id="trash-grid" class="modal-grid"></div>
+    </div>
+  </div>
+
+  <div id="counters-modal" class="modal-overlay" hidden data-player-only>
+    <div class="modal counters-modal">
+      <div class="modal-header">
+        <span data-i18n="countersTitle">Counters</span>
+        <button id="counters-close" data-i18n="close">Close</button>
+      </div>
+      <div class="counters-modal-body">
+        <table class="counters-table">
+          <thead>
+            <tr>
+              <th data-i18n="countersColLabel">Name</th>
+              <th data-i18n="countersColStart">Start</th>
+              <th data-i18n="countersColMin">Min</th>
+              <th data-i18n="countersColMax">Max</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="counters-tbody"></tbody>
+        </table>
+        <div class="modal-actions">
+          <button id="counters-add" data-i18n="countersAdd">Add counter</button>
+          <button id="counters-reset" data-i18n="countersResetDefaults">Reset to defaults</button>
+          <button id="counters-save" data-i18n="countersSave">Save</button>
+        </div>
+        <span id="counters-error" class="counters-error"></span>
+      </div>
+    </div>
+  </div>
+
+  <div id="card-measure" class="card" aria-hidden="true"></div>
+
+</div>
+<script type="module" src="static/app.js"></script>
+<script type="module">import { VERSION } from './static/version.js'; document.getElementById('app-version').textContent = 'v' + VERSION;</script>
+</body>
+</html>

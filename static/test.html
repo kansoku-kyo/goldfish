@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>state.js self-test</title>
+<style>
+  body { font-family: monospace; background: #111; color: #ddd; padding: 1em; }
+  .pass { color: #7ee787; }
+  .fail { color: #ff7b72; }
+  h1 { color: #fff; }
+</style>
+</head>
+<body>
+<div id="output"></div>
+<script type="module">
+import { newGame, reduce, serializeForStream, ZONES } from './state.js';
+
+const results = [];
+function assert(desc, cond) {
+  results.push({ desc, pass: !!cond });
+}
+function deepEqual(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+// Deterministic seeded LCG rng in [0,1).
+function makeRng(seed) {
+  let s = seed >>> 0;
+  return function rng() {
+    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+    return s / 4294967296;
+  };
+}
+
+const config = {
+  counters: [
+    { key: 'alpha', label: 'a', default: 0, min: 0, max: null },
+    { key: 'omega', label: 'O', default: 2, min: 0, max: 5 },
+  ],
+  startingHand: 3,
+};
+
+const deckJson = {
+  name: 'TestDeck',
+  cardBack: '/cards/Test/back.png',
+  cards: [
+    { id: 'a', name: 'Alpha', count: 4, image: '/cards/a.png' },
+    { id: 'b', name: 'Beta', count: 3, image: '/cards/b.png' },
+    { id: 'c', name: 'Gamma', count: 3, image: '/cards/c.png' },
+  ],
+};
+const TOTAL_CARDS = 10;
+
+// --- newGame ---
+const rng0 = makeRng(42);
+const s0 = newGame(deckJson, config, rng0);
+assert('newGame: deck+hand totals all cards', s0.zones.deck.length + s0.zones.hand.length === TOTAL_CARDS);
+assert('newGame: hand dealt startingHand', s0.zones.hand.length === config.startingHand);
+assert('newGame: field starts empty', s0.zones.field.length === 0);
+assert('newGame: trash empty', s0.zones.trash.length === 0);
+assert('newGame: positions starts empty', deepEqual(s0.positions, {}));
+assert('newGame: counters from config defaults', s0.counters.alpha === 0 && s0.counters.omega === 2);
+assert('newGame: turn is 1', s0.turn === 1);
+assert('newGame: log has one entry', deepEqual(s0.log, [{ key: 'log.newGame', vars: { deck: deckJson.name } }]));
+assert('newGame: instanceIds well formed', Object.keys(s0.cards).every((k) => /^[abc]#[1-9]\d*$/.test(k)));
+assert('newGame: cardBack copied', s0.cardBack === deckJson.cardBack);
+assert('ZONES exported correctly', deepEqual([...ZONES].sort(), ['deck', 'field', 'hand', 'trash']));
+
+// --- unknown action ---
+const sUnknown = reduce(s0, { type: 'nonsense' });
+assert('reduce: unknown action returns same reference', sUnknown === s0);
+
+// --- immutability ---
+const s0Snapshot = JSON.parse(JSON.stringify(s0));
+const s1 = reduce(s0, { type: 'shuffle', rng: makeRng(7) });
+assert('reduce: shuffle returns new reference', s1 !== s0);
+assert('reduce: shuffle does not mutate input', deepEqual(s0, s0Snapshot));
+assert('reduce: shuffle logs message', s1.log[s1.log.length - 1].key === 'log.shuffled');
+assert('reduce: shuffle keeps same card set', deepEqual([...s1.zones.deck].sort(), [...s0.zones.deck].sort()));
+
+// --- draw ---
+const s2 = reduce(s0, { type: 'draw', n: 2 });
+assert('draw: hand grows by n', s2.zones.hand.length === s0.zones.hand.length + 2);
+assert('draw: deck shrinks by n', s2.zones.deck.length === s0.zones.deck.length - 2);
+assert('draw: log records count', s2.log[s2.log.length - 1].key === 'log.drew' && s2.log[s2.log.length - 1].vars.n === 2);
+assert('draw: original state untouched', s0.zones.hand.length === config.startingHand);
+
+// draw more than available
+let sDrain = s0;
+while (sDrain.zones.deck.length > 0) {
+  sDrain = reduce(sDrain, { type: 'draw', n: 100 });
+}
+assert('draw: deck fully drained', sDrain.zones.deck.length === 0);
+const sEmptyDraw = reduce(sDrain, { type: 'draw', n: 1 });
+assert('draw: deck-empty logs message', sEmptyDraw.log[sEmptyDraw.log.length - 1].key === 'log.deckEmpty');
+assert('draw: deck-empty hand unchanged', sEmptyDraw.zones.hand.length === sDrain.zones.hand.length);
+
+// --- moveCard: hand -> field requires x,y ---
+const handCard1 = s0.zones.hand[0];
+const sNoXY = reduce(s0, { type: 'moveCard', instanceId: handCard1, to: 'field' });
+assert('moveCard to field without x,y is no-op (same reference)', sNoXY === s0);
+
+const s3 = reduce(s0, { type: 'moveCard', instanceId: handCard1, to: 'field', x: 0.5, y: 0.5 });
+assert('moveCard: card placed on field', s3.zones.field.includes(handCard1));
+assert('moveCard: card removed from hand', !s3.zones.hand.includes(handCard1));
+assert('moveCard: positions set', deepEqual(s3.positions[handCard1], { x: 0.5, y: 0.5 }));
+assert('moveCard: field placement is top of z-order', s3.zones.field[s3.zones.field.length - 1] === handCard1);
+assert('moveCard: log mentions field', s3.log[s3.log.length - 1].key === 'log.moved' && s3.log[s3.log.length - 1].vars.name === s3.cards[handCard1].name && s3.log[s3.log.length - 1].vars.zone === 'field');
+
+// --- moveCard to field clamps x to 0..1, y to 0..2 (y is a fraction of field WIDTH) ---
+const sClamp = reduce(s0, { type: 'moveCard', instanceId: handCard1, to: 'field', x: 1.7, y: -0.3 });
+{
+  const deckTop = s0.zones.deck[0];
+  const sFD = reduce(s0, { type: 'moveCard', instanceId: deckTop, to: 'field', x: 0.2, y: 0.2, faceDown: true });
+  assert('moveCard faceDown: card is face down on field', sFD.cards[deckTop].faceDown === true && sFD.zones.field.includes(deckTop));
+  const last = sFD.log[sFD.log.length - 1];
+  assert('moveCard faceDown: log hides the card name', last.key === 'log.movedFaceDown' && !(last.vars && last.vars.name));
+}
+assert('moveCard to field clamps x to 1', sClamp.positions[handCard1].x === 1);
+assert('moveCard to field clamps y to 0', sClamp.positions[handCard1].y === 0);
+const sClampHigh = reduce(s0, { type: 'moveCard', instanceId: handCard1, to: 'field', x: 0.5, y: 2.5 });
+assert('moveCard to field clamps y to 2', sClampHigh.positions[handCard1].y === 2);
+
+// --- second card placed on field goes to top of z-order ---
+const handCard2 = s0.zones.hand[1];
+const s4 = reduce(s3, { type: 'moveCard', instanceId: handCard2, to: 'field', x: 0.2, y: 0.3 });
+assert('moveCard: two cards on field', s4.zones.field.length === 2);
+assert('moveCard: newest card is on top', s4.zones.field[s4.zones.field.length - 1] === handCard2);
+
+// --- moveOnField: reposition + bring to top ---
+const s5 = reduce(s4, { type: 'moveOnField', instanceId: handCard1, x: 0.9, y: 0.1 });
+assert('moveOnField: repositions', deepEqual(s5.positions[handCard1], { x: 0.9, y: 0.1 }));
+assert('moveOnField: brings card to top of z-order', s5.zones.field[s5.zones.field.length - 1] === handCard1);
+assert('moveOnField: field length unchanged', s5.zones.field.length === 2);
+
+// --- moveOnField clamps (y is a fraction of field WIDTH, so its range is 0..2) ---
+const s5b = reduce(s4, { type: 'moveOnField', instanceId: handCard1, x: -1, y: 2.5 });
+assert('moveOnField clamps x to 0', s5b.positions[handCard1].x === 0);
+assert('moveOnField clamps y to 2', s5b.positions[handCard1].y === 2);
+
+// --- moveOnField: no-op if not on field ---
+const sOffField = reduce(s0, { type: 'moveOnField', instanceId: handCard1, x: 0.1, y: 0.1 });
+assert('moveOnField: no-op for card not on field (same reference)', sOffField === s0);
+
+// --- leaving field removes position entry ---
+const s6 = reduce(s4, { type: 'moveCard', instanceId: handCard1, to: 'hand' });
+assert('leaving field: position entry removed', !(handCard1 in s6.positions));
+assert('leaving field: card back in hand', s6.zones.hand.includes(handCard1));
+
+// --- hand reorder (drag within hand) ---
+const handOrder0 = s0.zones.hand;
+assert('hand reorder: setup has at least 2 cards', handOrder0.length >= 2);
+const reorderTarget = handOrder0[handOrder0.length - 1];
+const sHandReorder = reduce(s0, { type: 'moveCard', instanceId: reorderTarget, to: 'hand', index: 0 });
+assert('hand reorder: card moved to index 0', sHandReorder.zones.hand[0] === reorderTarget);
+assert('hand reorder: hand still has same cards', deepEqual([...sHandReorder.zones.hand].sort(), [...handOrder0].sort()));
+assert('hand reorder: no log entry added', sHandReorder.log.length === s0.log.length);
+
+const sSamePos = reduce(s0, { type: 'moveCard', instanceId: handOrder0[0], to: 'hand', index: 0 });
+assert('hand reorder to current position: same reference', sSamePos === s0);
+
+// --- cross-zone move to hand with index inserts at that index ---
+const sInsert = reduce(s3, { type: 'moveCard', instanceId: handCard1, to: 'hand', index: 1 });
+assert('field -> hand with index: inserted at index 1', sInsert.zones.hand[1] === handCard1);
+assert('field -> hand with index: log entry added', sInsert.log[sInsert.log.length - 1].key === 'log.moved');
+
+// --- toDeckTop / toDeckBottom ---
+const sTop = reduce(s0, { type: 'toDeckTop', instanceId: handCard1 });
+assert('toDeckTop: card is at deck[0]', sTop.zones.deck[0] === handCard1);
+const sBottom = reduce(s0, { type: 'toDeckBottom', instanceId: handCard1 });
+assert('toDeckBottom: card is at deck end', sBottom.zones.deck[sBottom.zones.deck.length - 1] === handCard1);
+
+// --- moving to trash resets tapped/faceDown ---
+let sFlagged = reduce(s3, { type: 'toggleTap', instanceId: handCard1 });
+sFlagged = reduce(sFlagged, { type: 'toggleFaceDown', instanceId: handCard1 });
+assert('toggleTap/toggleFaceDown set flags', sFlagged.cards[handCard1].tapped === true && sFlagged.cards[handCard1].faceDown === true);
+const sTrashed = reduce(sFlagged, { type: 'moveCard', instanceId: handCard1, to: 'trash' });
+assert('moveCard to trash resets tapped', sTrashed.cards[handCard1].tapped === false);
+assert('moveCard to trash resets faceDown', sTrashed.cards[handCard1].faceDown === false);
+assert('moveCard to trash appends at end', sTrashed.zones.trash[sTrashed.zones.trash.length - 1] === handCard1);
+
+// --- toggleTap / toggleFaceDown round trip + log wording ---
+const sTapOnce = reduce(s3, { type: 'toggleTap', instanceId: handCard1 });
+const sTapTwice = reduce(sTapOnce, { type: 'toggleTap', instanceId: handCard1 });
+assert('toggleTap: no-op for a card not on the field (same reference)', reduce(s0, { type: 'toggleTap', instanceId: handCard1 }) === s0);
+assert('toggleTap: flips true then false', sTapOnce.cards[handCard1].tapped === true && sTapTwice.cards[handCard1].tapped === false);
+const sFaceDown = reduce(s0, { type: 'toggleFaceDown', instanceId: handCard1 });
+assert('toggleFaceDown: log says placed face down', sFaceDown.log[sFaceDown.log.length - 1].key === 'log.faceDown' && sFaceDown.log[sFaceDown.log.length - 1].vars.name === sFaceDown.cards[handCard1].name);
+const sFaceUp = reduce(sFaceDown, { type: 'toggleFaceDown', instanceId: handCard1 });
+assert('toggleFaceDown: log says turned face up', sFaceUp.log[sFaceUp.log.length - 1].key === 'log.faceUp' && sFaceUp.log[sFaceUp.log.length - 1].vars.name === sFaceUp.cards[handCard1].name);
+
+// --- setCounter / adjustCounter clamp ---
+const sSetHigh = reduce(s0, { type: 'setCounter', key: 'omega', value: 999 });
+assert('setCounter clamps to max', sSetHigh.counters.omega === 5);
+const sSetLow = reduce(s0, { type: 'setCounter', key: 'omega', value: -999 });
+assert('setCounter clamps to min', sSetLow.counters.omega === 0);
+const sAdjHigh = reduce(sSetHigh, { type: 'adjustCounter', key: 'omega', delta: 100 });
+assert('adjustCounter clamps to max', sAdjHigh.counters.omega === 5);
+const sUnboundedAdj = reduce(s0, { type: 'adjustCounter', key: 'alpha', delta: 1000 });
+assert('adjustCounter unbounded (max null) applies delta', sUnboundedAdj.counters.alpha === 1000);
+const sUnknownKey = reduce(s0, { type: 'setCounter', key: 'zzz', value: 5 });
+assert('setCounter unknown key ignored (same reference)', sUnknownKey === s0);
+const sUnknownAdjKey = reduce(s0, { type: 'adjustCounter', key: 'zzz', delta: 5 });
+assert('adjustCounter unknown key ignored (same reference)', sUnknownAdjKey === s0);
+
+// --- no-op counter actions leave no trace (same reference, no log entry) ---
+const sAtMax = reduce(s0, { type: 'setCounter', key: 'omega', value: 5 });
+const sAdjustAtMax = reduce(sAtMax, { type: 'adjustCounter', key: 'omega', delta: 100 });
+assert('adjustCounter at max returns same reference (no-op)', sAdjustAtMax === sAtMax);
+const sSetSameValue = reduce(s0, { type: 'setCounter', key: 'omega', value: s0.counters.omega });
+assert('setCounter to current value returns same reference (no-op)', sSetSameValue === s0);
+
+// --- nextTurn: untaps ALL field cards ---
+let sTurn = reduce(s0, { type: 'moveCard', instanceId: handCard1, to: 'field', x: 0.4, y: 0.4 });
+sTurn = reduce(sTurn, { type: 'moveCard', instanceId: handCard2, to: 'field', x: 0.6, y: 0.6 });
+sTurn = reduce(sTurn, { type: 'toggleTap', instanceId: handCard1 });
+sTurn = reduce(sTurn, { type: 'toggleTap', instanceId: handCard2 });
+assert('nextTurn setup: both field cards tapped', sTurn.cards[handCard1].tapped === true && sTurn.cards[handCard2].tapped === true);
+const sNextTurn = reduce(sTurn, { type: 'nextTurn' });
+assert('nextTurn: turn increments', sNextTurn.turn === sTurn.turn + 1);
+assert('nextTurn: untaps all field cards', sNextTurn.cards[handCard1].tapped === false && sNextTurn.cards[handCard2].tapped === false);
+assert('nextTurn: logs turn number', sNextTurn.log[sNextTurn.log.length - 1].key === 'log.turn' && sNextTurn.log[sNextTurn.log.length - 1].vars.n === sNextTurn.turn);
+
+// --- discardHand ---
+const sDiscard = reduce(s0, { type: 'discardHand' });
+assert('discardHand: hand emptied', sDiscard.zones.hand.length === 0);
+assert('discardHand: trash grows by hand size', sDiscard.zones.trash.length === config.startingHand);
+assert('discardHand: flags reset', sDiscard.zones.trash.every((id) => sDiscard.cards[id].tapped === false && sDiscard.cards[id].faceDown === false));
+
+// --- handToDeckBottomRandom ---
+{
+  const seq = [0.9, 0.1, 0.5, 0.3, 0.7, 0.2, 0.8, 0.4];
+  let i = 0;
+  const rng = () => seq[i++ % seq.length];
+  const hand = [...s0.zones.hand];
+  const deckBefore = [...s0.zones.deck];
+  const sBot = reduce(s0, { type: 'handToDeckBottomRandom', rng });
+  assert('handToDeckBottomRandom: hand emptied', sBot.zones.hand.length === 0);
+  assert('handToDeckBottomRandom: deck grows by hand size', sBot.zones.deck.length === deckBefore.length + hand.length);
+  assert('handToDeckBottomRandom: existing deck order untouched', deckBefore.every((id, k) => sBot.zones.deck[k] === id));
+  const tail = sBot.zones.deck.slice(deckBefore.length);
+  assert('handToDeckBottomRandom: tail is the hand as a set', [...tail].sort().join() === [...hand].sort().join());
+  assert('handToDeckBottomRandom: tail order is shuffled', tail.join() !== hand.join());
+  assert('handToDeckBottomRandom: logs count only', sBot.log[sBot.log.length - 1].key === 'log.handToBottomRandom' && sBot.log[sBot.log.length - 1].vars.n === hand.length);
+  const sEmpty = reduce(sBot, { type: 'handToDeckBottomRandom', rng });
+  assert('handToDeckBottomRandom: empty hand is a no-op (same reference)', sEmpty === sBot);
+}
+
+// --- mulligan ---
+let sBeforeMull = reduce(s0, { type: 'toggleTap', instanceId: s0.zones.hand[0] });
+const sMulligan = reduce(sBeforeMull, { type: 'mulligan', rng: makeRng(99) });
+assert('mulligan: hand size back to startingHand', sMulligan.zones.hand.length === config.startingHand);
+assert('mulligan: deck size preserved total', sMulligan.zones.deck.length + sMulligan.zones.hand.length === TOTAL_CARDS);
+assert('mulligan: exactly one log entry added', sMulligan.log.length === sBeforeMull.log.length + 1);
+assert('mulligan: new hand cards untapped', sMulligan.zones.hand.every((id) => sMulligan.cards[id].tapped === false));
+
+// --- reset ---
+let sMessy = reduce(s0, { type: 'draw', n: 2 });
+sMessy = reduce(sMessy, { type: 'moveCard', instanceId: sMessy.zones.hand[0], to: 'field', x: 0.5, y: 0.5 });
+sMessy = reduce(sMessy, { type: 'nextTurn' });
+const sReset = reduce(sMessy, { type: 'reset', rng: makeRng(1) });
+assert('reset: turn back to 1', sReset.turn === 1);
+assert('reset: hand back to startingHand', sReset.zones.hand.length === config.startingHand);
+assert('reset: log reset to single new-game entry', deepEqual(sReset.log, [{ key: 'log.newGame', vars: { deck: deckJson.name } }]));
+assert('reset: deckName preserved', sReset.deckName === deckJson.name);
+assert('reset: field cleared', sReset.zones.field.length === 0);
+assert('reset: positions cleared', deepEqual(sReset.positions, {}));
+
+// --- log cap at 200 ---
+let sLogCap = s3;
+for (let i = 0; i < 250; i++) {
+  sLogCap = reduce(sLogCap, { type: 'toggleTap', instanceId: handCard1 });
+}
+assert('log cap: capped at 200 entries', sLogCap.log.length === 200);
+
+// --- serializeForStream ---
+let sStream = reduce(s0, { type: 'moveCard', instanceId: handCard1, to: 'field', x: 0.25, y: 0.75 });
+sStream = reduce(sStream, { type: 'toggleFaceDown', instanceId: handCard1 });
+const handCard3 = s0.zones.hand[2];
+sStream = reduce(sStream, { type: 'moveCard', instanceId: handCard3, to: 'trash' });
+const streamCopy = serializeForStream(sStream);
+assert('serializeForStream: deck becomes {count}', typeof streamCopy.zones.deck.count === 'number' && streamCopy.zones.deck.count === sStream.zones.deck.length);
+assert('serializeForStream: hand becomes {count}', typeof streamCopy.zones.hand.count === 'number' && streamCopy.zones.hand.count === sStream.zones.hand.length);
+assert('serializeForStream: faceDown card name hidden', streamCopy.cards[handCard1].name === null);
+assert('serializeForStream: faceDown card image hidden', streamCopy.cards[handCard1].image === null);
+assert('serializeForStream: faceDown card id removed', !('id' in streamCopy.cards[handCard1]));
+assert('serializeForStream: face-up card id kept', 'id' in streamCopy.cards[handCard3]);
+assert('serializeForStream: trashed card stays visible', streamCopy.cards[handCard3].name === sStream.cards[handCard3].name);
+assert('serializeForStream: positions pass through for field ids', deepEqual(streamCopy.positions[handCard1], sStream.positions[handCard1]));
+assert('serializeForStream: positions restricted to field ids', Object.keys(streamCopy.positions).every((id) => sStream.zones.field.includes(id)));
+assert('serializeForStream: field zone shape unchanged', deepEqual(streamCopy.zones.field, sStream.zones.field));
+assert('serializeForStream: trash zone shape unchanged', deepEqual(streamCopy.zones.trash, sStream.zones.trash));
+const allowedStreamIds = new Set([...sStream.zones.trash, ...sStream.zones.field]);
+assert('serializeForStream: cards restricted to trash+field ids', Object.keys(streamCopy.cards).every((id) => allowedStreamIds.has(id)));
+assert('serializeForStream: no hand-only card ids leaked', sStream.zones.hand.every((id) => !(id in streamCopy.cards)));
+assert('serializeForStream: no deck-only card ids leaked', sStream.zones.deck.every((id) => !(id in streamCopy.cards)));
+assert('serializeForStream: log included, capped at 30', Array.isArray(streamCopy.log) && streamCopy.log.length === Math.min(sStream.log.length, 30));
+assert('serializeForStream: no meta field', !('meta' in streamCopy));
+assert('serializeForStream: does not mutate original state', Array.isArray(sStream.zones.hand) && Array.isArray(sStream.zones.deck));
+
+// --- serializeForStream: log redaction ---
+let sLogA = reduce(s0, { type: 'moveCard', instanceId: handCard2, to: 'field', x: 0.1, y: 0.1 });
+const handCardForDeckTop = sLogA.zones.hand[0];
+sLogA = reduce(sLogA, { type: 'toDeckTop', instanceId: handCardForDeckTop });
+const handCardForDeckBottom = sLogA.zones.hand[0];
+sLogA = reduce(sLogA, { type: 'toDeckBottom', instanceId: handCardForDeckBottom });
+const streamLogA = serializeForStream(sLogA);
+const fieldMoveEntry = streamLogA.log.find((e) => e.key === 'log.moved' && e.vars && e.vars.zone === 'field');
+assert('serializeForStream log: field-move entry keeps name', !!fieldMoveEntry && fieldMoveEntry.vars.name === sLogA.cards[handCard2].name);
+const deckTopEntry = streamLogA.log.find((e) => e.key === 'log.toDeckTop');
+assert('serializeForStream log: toDeckTop entry has name redacted', !!deckTopEntry && !('name' in deckTopEntry.vars));
+const deckBottomEntry = streamLogA.log.find((e) => e.key === 'log.toDeckBottom');
+assert('serializeForStream log: toDeckBottom entry has name redacted', !!deckBottomEntry && !('name' in deckBottomEntry.vars));
+assert('serializeForStream log: does not mutate original log entries', 'name' in sLogA.log[sLogA.log.length - 1].vars);
+
+let sLogB = reduce(s0, { type: 'moveCard', instanceId: handCard3, to: 'trash' });
+sLogB = reduce(sLogB, { type: 'moveCard', instanceId: handCard3, to: 'hand' });
+const streamLogB = serializeForStream(sLogB);
+const handMoveEntry = streamLogB.log.find((e) => e.key === 'log.moved' && e.vars && e.vars.zone === 'hand');
+assert('serializeForStream log: hand-move entry has name redacted', !!handMoveEntry && !('name' in handMoveEntry.vars));
+const trashMoveEntry = streamLogB.log.find((e) => e.key === 'log.moved' && e.vars && e.vars.zone === 'trash');
+assert('serializeForStream log: trash-move entry keeps name', !!trashMoveEntry && trashMoveEntry.vars.name === sLogB.cards[handCard3].name);
+
+// --- shuffle only affects deck ---
+const sShuffleCheck = reduce(s0, { type: 'shuffle', rng: makeRng(3) });
+assert('shuffle: hand untouched', deepEqual(sShuffleCheck.zones.hand, s0.zones.hand));
+assert('shuffle: trash/field untouched', deepEqual(sShuffleCheck.zones.trash, s0.zones.trash) && deepEqual(sShuffleCheck.zones.field, s0.zones.field));
+
+// --- reorderDeckTop ---
+const deckPrefix3 = s0.zones.deck.slice(0, 3);
+const permIds = [deckPrefix3[2], deckPrefix3[0], deckPrefix3[1]];
+const permIdsCopy = [...permIds];
+const sReorder = reduce(s0, { type: 'reorderDeckTop', ids: permIds });
+assert('reorderDeckTop: applies given order to prefix', deepEqual(sReorder.zones.deck.slice(0, 3), permIds));
+assert('reorderDeckTop: rest of deck unchanged', deepEqual(sReorder.zones.deck.slice(3), s0.zones.deck.slice(3)));
+assert('reorderDeckTop: input ids array not mutated', deepEqual(permIds, permIdsCopy));
+assert('reorderDeckTop: logs message', sReorder.log[sReorder.log.length - 1].key === 'log.reorderedTop' && sReorder.log[sReorder.log.length - 1].vars.n === 3);
+
+const wrongSetIds = [deckPrefix3[0], deckPrefix3[1], s0.zones.deck[5]];
+const sWrongSet = reduce(s0, { type: 'reorderDeckTop', ids: wrongSetIds });
+assert('reorderDeckTop: wrong set of ids is no-op (same reference)', sWrongSet === s0);
+
+const dupIds = [deckPrefix3[0], deckPrefix3[0], deckPrefix3[1]];
+const sDup = reduce(s0, { type: 'reorderDeckTop', ids: dupIds });
+assert('reorderDeckTop: duplicate ids is no-op (same reference)', sDup === s0);
+
+const tooLongIds = [...s0.zones.deck, 'nonexistent#1'];
+const sTooLong = reduce(s0, { type: 'reorderDeckTop', ids: tooLongIds });
+assert('reorderDeckTop: too-long ids is no-op (same reference)', sTooLong === s0);
+
+const sEmptyReorder = reduce(s0, { type: 'reorderDeckTop', ids: [] });
+assert('reorderDeckTop: empty ids is no-op (same reference)', sEmptyReorder === s0);
+
+const permIdsForBottom = [deckPrefix3[2], deckPrefix3[0], deckPrefix3[1]];
+const sReorderBottom = reduce(s0, { type: 'reorderDeckTop', ids: permIdsForBottom, toBottom: true });
+assert('reorderDeckTop toBottom: moves given prefix order to bottom', deepEqual(sReorderBottom.zones.deck, [...s0.zones.deck.slice(3), ...permIdsForBottom]));
+assert('reorderDeckTop toBottom: logs toBottom message', sReorderBottom.log[sReorderBottom.log.length - 1].key === 'log.toBottom' && sReorderBottom.log[sReorderBottom.log.length - 1].vars.n === 3);
+
+// --- deckTopToBottom ---
+const deckBeforeBottom = s0.zones.deck.slice();
+const sBottom3 = reduce(s0, { type: 'deckTopToBottom', n: 3 });
+assert('deckTopToBottom: moves top n to bottom preserving order', deepEqual(sBottom3.zones.deck, [...deckBeforeBottom.slice(3), ...deckBeforeBottom.slice(0, 3)]));
+assert('deckTopToBottom: logs message', sBottom3.log[sBottom3.log.length - 1].key === 'log.toBottom' && sBottom3.log[sBottom3.log.length - 1].vars.n === 3);
+
+const bigN = deckBeforeBottom.length + 10;
+const sBottomClamped = reduce(s0, { type: 'deckTopToBottom', n: bigN });
+assert('deckTopToBottom: n clamped to deck length', deepEqual(sBottomClamped.zones.deck, deckBeforeBottom));
+assert('deckTopToBottom: clamped log uses actual count', sBottomClamped.log[sBottomClamped.log.length - 1].key === 'log.toBottom' && sBottomClamped.log[sBottomClamped.log.length - 1].vars.n === deckBeforeBottom.length);
+
+const sBottomZero = reduce(s0, { type: 'deckTopToBottom', n: 0 });
+assert('deckTopToBottom: n<=0 is no-op (same reference)', sBottomZero === s0);
+const sBottomNeg = reduce(s0, { type: 'deckTopToBottom', n: -5 });
+assert('deckTopToBottom: negative n is no-op (same reference)', sBottomNeg === s0);
+
+// --- rollDice ---
+assert('newGame: lastRoll starts null', s0.lastRoll === null);
+
+const sRoll1 = reduce(s0, { type: 'rollDice', sides: 6, count: 2, rng: makeRng(5) });
+assert('rollDice: sets lastRoll', sRoll1.lastRoll !== null);
+assert('rollDice: sides/count recorded', sRoll1.lastRoll.sides === 6 && sRoll1.lastRoll.count === 2);
+assert('rollDice: results length matches count', sRoll1.lastRoll.results.length === 2);
+assert('rollDice: results in range 1..sides', sRoll1.lastRoll.results.every((r) => r >= 1 && r <= 6));
+assert('rollDice: total matches sum of results', sRoll1.lastRoll.total === sRoll1.lastRoll.results.reduce((a, b) => a + b, 0));
+assert('rollDice: seq starts at 1', sRoll1.lastRoll.seq === 1);
+assert('rollDice: logs log.dice with vars', sRoll1.log[sRoll1.log.length - 1].key === 'log.dice'
+  && sRoll1.log[sRoll1.log.length - 1].vars.count === 2
+  && sRoll1.log[sRoll1.log.length - 1].vars.sides === 6
+  && sRoll1.log[sRoll1.log.length - 1].vars.total === sRoll1.lastRoll.total
+  && sRoll1.log[sRoll1.log.length - 1].vars.results === sRoll1.lastRoll.results.join(', '));
+assert('rollDice: deterministic with seeded rng', deepEqual(
+  reduce(s0, { type: 'rollDice', sides: 6, count: 2, rng: makeRng(5) }).lastRoll.results,
+  sRoll1.lastRoll.results,
+));
+assert('rollDice: does not mutate input state', s0.lastRoll === null);
+
+const sRoll2 = reduce(sRoll1, { type: 'rollDice', sides: 20, count: 1, rng: makeRng(11) });
+assert('rollDice: seq increments on subsequent roll', sRoll2.lastRoll.seq === 2);
+assert('rollDice: single-die result in range', sRoll2.lastRoll.results[0] >= 1 && sRoll2.lastRoll.results[0] <= 20);
+
+const sRollBadSides = reduce(s0, { type: 'rollDice', sides: 7, count: 1 });
+assert('rollDice: invalid sides is no-op (same reference)', sRollBadSides === s0);
+const sRollBadCount0 = reduce(s0, { type: 'rollDice', sides: 6, count: 0 });
+assert('rollDice: count 0 is no-op (same reference)', sRollBadCount0 === s0);
+const sRollBadCount11 = reduce(s0, { type: 'rollDice', sides: 6, count: 11 });
+assert('rollDice: count over 10 is no-op (same reference)', sRollBadCount11 === s0);
+
+const sResetAfterRoll = reduce(sRoll1, { type: 'reset', rng: makeRng(1) });
+assert('reset: lastRoll cleared', sResetAfterRoll.lastRoll === null);
+
+const streamWithRoll = serializeForStream(sRoll1);
+assert('serializeForStream: lastRoll passed through', deepEqual(streamWithRoll.lastRoll, sRoll1.lastRoll));
+const streamNoRoll = serializeForStream(s0);
+assert('serializeForStream: lastRoll null passes through as null', streamNoRoll.lastRoll === null);
+
+// --- groups ---
+assert('newGame: groups starts empty', deepEqual(s0.groups, []));
+
+let sg0 = reduce(s0, { type: 'moveCard', instanceId: handCard2, to: 'field', x: 0.1, y: 0.1 });
+sg0 = reduce(sg0, { type: 'moveCard', instanceId: handCard1, to: 'field', x: 0.2, y: 0.2 });
+sg0 = reduce(sg0, { type: 'moveCard', instanceId: handCard3, to: 'field', x: 0.3, y: 0.3 });
+// sg0.zones.field is now [handCard2, handCard1, handCard3]
+
+const sGrouped = reduce(sg0, { type: 'groupCards', instanceIds: [handCard3, handCard1, handCard2] });
+assert('groupCards: new group ordered by current field order (not arg order)', deepEqual(sGrouped.groups, [[handCard2, handCard1, handCard3]]));
+assert('groupCards: logs grouped with member count', sGrouped.log[sGrouped.log.length - 1].key === 'log.grouped' && sGrouped.log[sGrouped.log.length - 1].vars.n === 3);
+
+const sGroupNoop = reduce(sg0, { type: 'groupCards', instanceIds: [handCard1] });
+assert('groupCards: fewer than 2 field ids is a no-op (same reference)', sGroupNoop === sg0);
+const sGroupNoop2 = reduce(sg0, { type: 'groupCards', instanceIds: [handCard1, 'ghost#1'] });
+assert('groupCards: unknown ids filtered out; <2 remain is a no-op (same reference)', sGroupNoop2 === sg0);
+
+const sUngroupPartial = reduce(sGrouped, { type: 'ungroupCards', instanceIds: [handCard1] });
+assert('ungroupCards: partial removal keeps the remaining members grouped', deepEqual(sUngroupPartial.groups, [[handCard2, handCard3]]));
+assert('ungroupCards: logs ungrouped with n = ids actually removed', sUngroupPartial.log[sUngroupPartial.log.length - 1].key === 'log.ungrouped' && sUngroupPartial.log[sUngroupPartial.log.length - 1].vars.n === 1);
+const sUngroupAll = reduce(sUngroupPartial, { type: 'ungroupCards', instanceIds: [handCard2] });
+assert('ungroupCards: dropping below 2 members dissolves the group', sUngroupAll.groups.length === 0);
+const sUngroupNoop = reduce(sGrouped, { type: 'ungroupCards', instanceIds: ['ghost#1'] });
+assert('ungroupCards: no matching ids is a no-op (same reference)', sUngroupNoop === sGrouped);
+
+const sPairGroup = reduce(sg0, { type: 'groupCards', instanceIds: [handCard2, handCard3] });
+assert('groupCards: 2-member group created', deepEqual(sPairGroup.groups, [[handCard2, handCard3]]));
+const sPrunedByMove = reduce(sPairGroup, { type: 'moveCard', instanceId: handCard2, to: 'hand' });
+assert('moving a group member off the field dissolves a 2-card group', sPrunedByMove.groups.length === 0);
+assert('moving a group member off the field: card actually left the field', !sPrunedByMove.zones.field.includes(handCard2));
+
+const sMoveNoop = reduce(sg0, { type: 'moveCardsOnField', moves: [] });
+assert('moveCardsOnField: empty moves is a no-op (same reference)', sMoveNoop === sg0);
+const sMoveNoop2 = reduce(sg0, { type: 'moveCardsOnField', moves: [{ instanceId: 'ghost#1', x: 0.1, y: 0.1 }] });
+assert('moveCardsOnField: unknown instanceId is a no-op (same reference)', sMoveNoop2 === sg0);
+
+const sMovedGroup = reduce(sg0, {
+  type: 'moveCardsOnField',
+  moves: [
+    { instanceId: handCard3, x: 0.5, y: 0.5 },
+    { instanceId: handCard2, x: 0.6, y: 0.6 },
+  ],
+});
+assert('moveCardsOnField: positions updated for every moved card', deepEqual(sMovedGroup.positions[handCard3], { x: 0.5, y: 0.5 }) && deepEqual(sMovedGroup.positions[handCard2], { x: 0.6, y: 0.6 }));
+assert('moveCardsOnField: moved ids land on top, preserving their prior relative order', deepEqual(sMovedGroup.zones.field, [handCard1, handCard2, handCard3]));
+assert('moveCardsOnField: does not add a log entry', sMovedGroup.log.length === sg0.log.length);
+
+const streamWithGroups = serializeForStream(sPairGroup);
+assert('serializeForStream: includes groups filtered to visible field ids', deepEqual(streamWithGroups.groups, [[handCard2, handCard3]]));
+const sSyntheticStrayGroup = { ...sPairGroup, groups: [...sPairGroup.groups, [handCard1, 'ghost#1']] };
+const streamStray = serializeForStream(sSyntheticStrayGroup);
+assert('serializeForStream: drops groups referencing ids outside the current field (same pruning rule)', streamStray.groups.length === 1 && deepEqual(streamStray.groups[0], [handCard2, handCard3]));
+
+// --- swapOnField ---
+let sSwapSetup = reduce(s0, { type: 'moveCard', instanceId: handCard1, to: 'field', x: 0.25, y: 0.5 });
+sSwapSetup = reduce(sSwapSetup, { type: 'moveCard', instanceId: handCard2, to: 'field', x: 0.75, y: 1 });
+sSwapSetup = reduce(sSwapSetup, { type: 'moveCard', instanceId: handCard3, to: 'field', x: 0.5, y: 1.5 });
+// sSwapSetup.zones.field is [handCard1, handCard2, handCard3]
+
+const sSwapLone = reduce(sSwapSetup, { type: 'swapOnField', a: handCard1, b: handCard2 });
+assert('swapOnField: two lone cards exchange positions exactly', deepEqual(sSwapLone.positions[handCard1], sSwapSetup.positions[handCard2]) && deepEqual(sSwapLone.positions[handCard2], sSwapSetup.positions[handCard1]));
+assert('swapOnField: uninvolved card is untouched', deepEqual(sSwapLone.positions[handCard3], sSwapSetup.positions[handCard3]));
+assert('swapOnField: zones.field order unchanged', deepEqual(sSwapLone.zones.field, sSwapSetup.zones.field));
+assert('swapOnField: logs swapped with anchor names', sSwapLone.log[sSwapLone.log.length - 1].key === 'log.swapped'
+  && deepEqual(sSwapLone.log[sSwapLone.log.length - 1].vars, { a: sSwapSetup.cards[handCard1].name, b: sSwapSetup.cards[handCard2].name }));
+
+const sPairGroup2 = reduce(sSwapSetup, { type: 'groupCards', instanceIds: [handCard2, handCard3] });
+const sSwapGroup = reduce(sPairGroup2, { type: 'swapOnField', a: handCard1, b: handCard2 });
+assert('swapOnField: lone card moves to the group anchor position', deepEqual(sSwapGroup.positions[handCard1], sPairGroup2.positions[handCard2]));
+assert('swapOnField: group anchor moves by delta', deepEqual(sSwapGroup.positions[handCard2], { x: 0.25, y: 0.5 }));
+assert('swapOnField: other group member moves by the same delta, preserving relative offset', deepEqual(sSwapGroup.positions[handCard3], { x: 0, y: 1 }));
+assert('swapOnField: group swap zones.field order unchanged', deepEqual(sSwapGroup.zones.field, sPairGroup2.zones.field));
+
+const sSwapSameUnit = reduce(sPairGroup2, { type: 'swapOnField', a: handCard2, b: handCard3 });
+assert('swapOnField: both ids in the same unit is a no-op (same reference)', sSwapSameUnit === sPairGroup2);
+const sSwapOffField = reduce(sSwapSetup, { type: 'swapOnField', a: handCard1, b: 'ghost#1' });
+assert('swapOnField: unknown/off-field id is a no-op (same reference)', sSwapOffField === sSwapSetup);
+
+// --- render results ---
+const out = document.getElementById('output');
+for (const r of results) {
+  const line = `${r.pass ? 'PASS' : 'FAIL'} - ${r.desc}`;
+  const div = document.createElement('div');
+  div.className = r.pass ? 'pass' : 'fail';
+  div.textContent = line;
+  out.appendChild(div);
+  console.log(line);
+}
+const failed = results.filter((r) => !r.pass);
+const h1 = document.createElement('h1');
+h1.id = 'result';
+h1.textContent = failed.length === 0 ? 'ALL PASS' : `${failed.length} FAILED`;
+document.body.appendChild(h1);
+console.log(h1.textContent);
+</script>
+</body>
+</html>
