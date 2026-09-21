@@ -25,6 +25,7 @@ jobs:
       - name: Assemble static site
         run: |
           mkdir -p _site/static
+          python3 tools/make_poker_deck.py --out _site/decks --manifest
           cp static/*.js static/*.css static/*.svg static/*.html _site/static/
           cp static/index.html _site/index.html
           cp config.json _site/config.json

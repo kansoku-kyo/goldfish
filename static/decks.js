@@ -48,6 +48,11 @@ function applyDeckImages(state, deck) {
   return true;
 }
 
+// Re-point a saved state's images at a freshly-loaded deck (e.g. a bundled deck).
+export function rehydrateFrom(state, deck) {
+  return applyDeckImages(state, deck);
+}
+
 function openDb() {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
@@ -248,6 +253,38 @@ export function deckNameFromFiles(files) {
     if (i > 0) return rel.slice(0, i);
   }
   return '';
+}
+
+// ------------------------------------------------------------- bundled ---
+
+// Decks shipped alongside the static site, listed in decks/index.json.
+export class BundledDecks {
+  constructor() { this.decks = []; }
+
+  async init() {
+    try {
+      const res = await fetch('decks/index.json', { cache: 'no-store' });
+      if (!res.ok) { this.decks = []; return; }
+      const data = await res.json();
+      this.decks = Array.isArray(data.decks) ? data.decks : [];
+    } catch { this.decks = []; }
+  }
+
+  has(name) { return this.decks.some((d) => d.name === name); }
+
+  list() {
+    return this.decks.map((d) => {
+      const built = buildDeck(d.name, d.files.map((name) => ({ name })), () => '');
+      return { name: d.name, cardCount: built.cardCount, uniqueCount: built.uniqueCount };
+    });
+  }
+
+  load(name) {
+    const d = this.decks.find((x) => x.name === name);
+    if (!d) return null;
+    return buildDeck(d.name, d.files.map((f) => ({ name: f })),
+      (f) => `decks/${encodeURIComponent(d.name)}/${encodeURIComponent(f.name)}`);
+  }
 }
 
 export async function isServerAvailable() {

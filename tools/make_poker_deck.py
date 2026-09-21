@@ -1,5 +1,6 @@
 """Generate an original 54-card poker deck as SVG files (Goldfish deck folder format)."""
 import argparse
+import json
 from pathlib import Path
 
 W, H = 630, 880
@@ -198,10 +199,30 @@ def write_deck(out_dir: Path, name: str) -> Path:
     return deck_dir
 
 
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".svg"}
+
+
+def write_manifest(out_dir: Path) -> Path:
+    """Scan out_dir for deck subfolders and write out_dir/index.json."""
+    decks = []
+    for deck_dir in sorted(out_dir.iterdir(), key=lambda p: p.name):
+        if not deck_dir.is_dir() or deck_dir.name.startswith("."):
+            continue
+        files = sorted(
+            f.name for f in deck_dir.iterdir()
+            if f.is_file() and f.suffix.lower() in IMAGE_EXTS
+        )
+        decks.append({"name": deck_dir.name, "files": files})
+    manifest_path = out_dir / "index.json"
+    manifest_path.write_text(json.dumps({"decks": decks}, indent=2), encoding="utf-8")
+    return manifest_path
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", default=None, help="Output decks directory")
     parser.add_argument("--name", default="Poker", help="Deck folder name")
+    parser.add_argument("--manifest", action="store_true", help="Write decks/index.json manifest")
     args = parser.parse_args(argv)
 
     repo_root = Path(__file__).resolve().parent.parent
@@ -209,6 +230,8 @@ def main(argv=None):
     deck_dir = write_deck(out_dir, args.name)
     count = len(list(deck_dir.iterdir()))
     print(f"{deck_dir} ({count} files)")
+    if args.manifest:
+        write_manifest(out_dir)
 
 
 if __name__ == "__main__":

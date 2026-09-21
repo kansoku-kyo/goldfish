@@ -3,7 +3,7 @@ import * as GameState from './state.js';
 import * as R from './render.js';
 import { publish, onHello, onState, sendHello } from './sync.js';
 import { t, getLang, setLang, applyStatic } from './i18n.js';
-import { ServerStore, FolderStore, IdbStore, hasFsAccess, isServerAvailable, deckNameFromFiles } from './decks.js';
+import { ServerStore, FolderStore, IdbStore, hasFsAccess, isServerAvailable, deckNameFromFiles, BundledDecks, rehydrateFrom } from './decks.js';
 
 const STORAGE_KEY = 'goldfish-save';
 const MAX_HISTORY = 100;
@@ -22,6 +22,7 @@ document.body.classList.add(mode === 'stream' ? 'mode-stream' : 'mode-player');
 
 let config = null;
 let store = null; // deck storage backend (server, chosen folder, or IndexedDB)
+let bundled = null; // decks shipped with the static site (server mode: unused)
 
 async function initStore() {
   if (await isServerAvailable()) return new ServerStore();
@@ -480,6 +481,8 @@ function getEls() {
 
 async function initPlayer() {
   store = await initStore();
+  bundled = new BundledDecks();
+  if (store.kind !== 'server') await bundled.init();
   config = await fetchConfig();
   const defaultCounters = config.counters || [];
   applyCounterConfig(config);
@@ -560,7 +563,8 @@ async function initPlayer() {
     els.folderBanner.hidden = !needsGesture;
     if (needsGesture) { render(); return; }
     if (state && store.kind !== 'server') {
-      const ok = await store.rehydrate(state);
+      let ok = await store.rehydrate(state);
+      if (!ok && bundled.has(state.deckName)) ok = rehydrateFrom(state, bundled.load(state.deckName));
       if (!ok) { state = null; history = []; }
     }
     await loadDeckList();
@@ -751,6 +755,10 @@ async function initPlayer() {
   async function loadDeckList() {
     let decks = [];
     try { decks = await store.list(); } catch (e) { /* no access yet */ }
+    try {
+      const names = new Set(decks.map((d) => d.name));
+      decks = bundled.list().filter((d) => !names.has(d.name)).concat(decks);
+    } catch (e) { /* bad manifest */ }
     els.deckSelect.innerHTML = '';
     for (const d of decks) {
       const opt = document.createElement('option');
@@ -763,8 +771,14 @@ async function initPlayer() {
     els.folderLabel.textContent = store.kind === 'folder' ? (store.label || t('noFolderChosen')) : '';
   }
 
+  async function loadDeck(deckName) {
+    let deck = null;
+    try { deck = await store.load(deckName); } catch (e) { /* no access */ }
+    return deck || (bundled.has(deckName) ? bundled.load(deckName) : null);
+  }
+
   async function newGame(deckName) {
-    const deckJson = await store.load(deckName);
+    const deckJson = await loadDeck(deckName);
     if (!deckJson) return;
     history = [];
     state = GameState.newGame(deckJson, config);

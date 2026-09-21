@@ -18,15 +18,13 @@ Use ☰ → **Import from disk…** to pick a deck folder on your computer.
 
 ### Sample deck
 
-No deck yet? Generate a standard 54-card poker deck (drawn by the app,
-no copyrighted art):
+A standard 54-card poker deck (drawn by the app, no copyrighted art) is
+preinstalled and appears in the ☰ deck list as **Poker**. To write a copy
+somewhere else, e.g. as a template for your own deck folder:
 
 ```
-python tools/make_poker_deck.py --out <your decks folder>
+python tools/make_poker_deck.py --out <folder>
 ```
-
-Then import that `Poker` folder with **Import from disk…**. Running the app
-locally, omit `--out` and it lands in `decks/` directly.
 
 ### Where decks are stored
 

@@ -249,6 +249,21 @@ def make_server(port=8000, decks_dir="decks", static_dir="static"):
     return server
 
 
+def ensure_bundled_decks(decks_dir: Path):
+    """Create decks_dir/Poker via the deck generator if it doesn't exist yet."""
+    decks_dir = Path(decks_dir)
+    if (decks_dir / "Poker").exists():
+        return
+    try:
+        import sys
+        sys.path.insert(0, str(BASE_DIR / "tools"))
+        import make_poker_deck
+        decks_dir.mkdir(parents=True, exist_ok=True)
+        make_poker_deck.write_deck(decks_dir, "Poker")
+    except Exception as exc:
+        print(f"Warning: could not create bundled Poker deck: {exc}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Goldfish local server")
     parser.add_argument("--port", type=int, default=8000)
@@ -256,6 +271,7 @@ def main():
     parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args()
 
+    ensure_bundled_decks(Path(args.decks))
     server = make_server(port=args.port, decks_dir=args.decks, static_dir="static")
     url = f"http://localhost:{server.server_address[1]}"
     if not args.no_browser:

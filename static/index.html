@@ -37,25 +37,23 @@
   </header>
 
   <div id="burger-menu" class="dropdown-menu" hidden data-player-only>
-    <div class="menu-section">
+    <div class="menu-deck">
       <select id="deck-select"></select>
       <button id="btn-new-game" data-i18n="newGame">New game</button>
     </div>
-    <div class="menu-section" data-folder-only>
+    <div class="menu-divider"></div>
+    <div class="menu-folder-row" data-folder-only>
       <span class="menu-label" data-i18n="decksFolder">Decks folder:</span>
       <span id="folder-label" class="menu-value"></span>
       <button id="btn-pick-folder" data-i18n="chooseFolder">Choose&hellip;</button>
     </div>
-    <div class="menu-section">
-      <label class="file-btn"><span data-i18n="importFromDisk">Import from disk&hellip;</span><input id="import-disk" type="file" webkitdirectory multiple></label>
-      <span id="import-status"></span>
-    </div>
-    <div class="menu-section">
-      <button id="btn-open-stream" data-i18n="openStream">Open stream window</button>
-      <button id="btn-toggle-log" data-i18n="showLog">Show log</button>
-      <button id="btn-language" data-i18n="languageMenuItem">Language / &#8288;言語</button>
-      <button id="btn-reset-data" data-i18n="resetData">Reset app data&hellip;</button>
-    </div>
+    <label class="file-btn menu-row"><span data-i18n="importFromDisk">Import from disk&hellip;</span><input id="import-disk" type="file" webkitdirectory multiple></label>
+    <span id="import-status"></span>
+    <button id="btn-open-stream" class="menu-row" data-i18n="openStream">Open stream window</button>
+    <button id="btn-toggle-log" class="menu-row" data-i18n="showLog">Show log</button>
+    <button id="btn-language" class="menu-row" data-i18n="languageMenuItem">Language / &#8288;言語</button>
+    <div class="menu-divider"></div>
+    <button id="btn-reset-data" class="menu-row" data-i18n="resetData">Reset app data&hellip;</button>
     <div class="menu-footer"><span id="app-version"></span><span class="menu-footer-sep">&middot;</span><span>きょ</span></div>
   </div>
 
